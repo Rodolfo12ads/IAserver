@@ -486,17 +486,31 @@ class GoldTradingServer:
         except Exception as e:
             logger.error(f"[ERROR] Notícias: {e}")
     
-    def check_news_impact(self, minutes_before=20, minutes_after=30):
-        """Verifica eventos próximos - CORRIGIDO"""
+    def check_news_impact(self, minutes_before=180, minutes_after=120):
+        """Verifica eventos próximos - JANELA AUMENTADA"""
         try:
             now = datetime.now()
             critical_events = []
             
+            logger.info(f"[DEBUG] Verificando {len(self.economic_events)} eventos...")
+            logger.info(f"[DEBUG] Janela aumentada: -{minutes_after}min a +{minutes_before}min")
+            
             for event in self.economic_events:
                 time_diff = (event['time'] - now).total_seconds() / 60
                 
-                # CORREÇÃO: Verifica se o evento está na janela de bloqueio
-                if -minutes_after <= time_diff <= minutes_before:
+                # Janela dinâmica baseada no impacto
+                if event['impact'] in ['ALTA', 'HIGH', 'CRITICAL']:
+                    event_minutes_before = 180  # 3 horas para eventos ALTOS
+                    event_minutes_after = 120   # 2 horas após
+                else:
+                    event_minutes_before = 60   # 1 hora para eventos médios
+                    event_minutes_after = 60    # 1 hora após
+                
+                logger.info(f"[DEBUG] Evento: {event['name']} - Tempo: {time_diff:.1f}min - Impacto: {event['impact']} - Janela: -{event_minutes_after}/+{event_minutes_before}min")
+                
+                # Verifica se o evento está na janela de bloqueio
+                if -event_minutes_after <= time_diff <= event_minutes_before:
+                    logger.info(f"[DEBUG] ⚠️ EVENTO NA JANELA: {event['name']} em {time_diff:.1f}min")
                     critical_events.append({
                         'event_name': event['name'],
                         'impact': event['impact'],
@@ -506,17 +520,22 @@ class GoldTradingServer:
                     })
             
             if critical_events:
-                # CORREÇÃO: Ordena por impacto (agora suporta português e inglês)
+                logger.info(f"[DEBUG] 🚨 {len(critical_events)} eventos críticos encontrados")
+                # Ordena por impacto e proximidade
                 critical_events.sort(key=lambda x: (
                     {'CRITICAL': 0, 'HIGH': 1, 'ALTA': 1, 'MEDIUM': 2, 'MÉDIA': 2, 'MÉDIO': 2, 'LOW': 3, 'BAIXA': 3}.get(x['impact'], 4),
                     abs(x['minutes_away'])
                 ))
                 
-                return {
+                result = {
                     'has_event': True,
                     **critical_events[0],
                     'total_events': len(critical_events)
                 }
+                logger.info(f"[DEBUG] 🔒 BLOQUEANDO: {result['event_name']} em {result['minutes_away']}min")
+                return result
+            else:
+                logger.info("[DEBUG] ✅ Nenhum evento crítico - TRADE LIBERADO")
             
             return {'has_event': False}
             
@@ -544,7 +563,7 @@ class GoldTradingServer:
                     logger.debug("[CACHE] Retornando sinal do cache")
                     return cached['signal']
             
-            # CORREÇÃO: Verifica eventos primeiro (agora funciona corretamente)
+            # CORREÇÃO: Verifica eventos primeiro (agora com janela maior)
             news_impact = self.check_news_impact()
             
             if news_impact['has_event']:
@@ -917,14 +936,14 @@ def force_update():
 # Inicialização
 if __name__ == '__main__':
     print("="*70)
-    print(" "*10 + "GOLDAI PRO SERVER v2.0 - BLOQUEIO DE EVENTOS CORRIGIDO")
+    print(" "*10 + "GOLDAI PRO SERVER v2.0 - JANELA DE BLOQUEIO CORRIGIDA")
     print("="*70)
     print("\n[OK] Recursos implementados:")
+    print("  - ✅ Janela de bloqueio aumentada: 3h antes + 2h depois (eventos ALTOS)")
+    print("  - ✅ Janela de bloqueio: 1h antes + 1h depois (eventos MÉDIOS)") 
     print("  - ✅ Bloqueio de eventos funcionando (português/inglês)")
-    print("  - ✅ Carregamento de calendário do Google Drive") 
+    print("  - ✅ Carregamento de calendário do Google Drive")
     print("  - ✅ Filtro automático de eventos FUTUROS")
-    print("  - ✅ Fallback para API externa")
-    print("  - ✅ Geração de eventos de teste se necessário")
     print("\n[INFO] Configurações:")
     print(f"  - Fonte CSV: Google Drive")
     print(f"  - Alpha Vantage (Limite: {API_RATE_LIMIT}/dia)")
