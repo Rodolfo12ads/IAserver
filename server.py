@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 ALPHA_VANTAGE_KEY = "1SNBE21SNHMIW6LP"
 API_RATE_LIMIT = 500
 CACHE_DURATION_MINUTES = 15
-CSV_PATH = r"C:\Users\rodol\OneDrive\Documentos\cAlgo\news_calendar.csv"
+NEWS_CSV_URL = "https://drive.google.com/uc?export=download&id=1TIHUF9zKnUVA5AZFHJHOTmytdQd3_YZ6"
 
 # ═══════════════════════════════════════════════════════════════════════
 # DECORADORES
@@ -834,4 +834,5 @@ if __name__ == '__main__':
     logger.info("[OK] Sistema pronto!")
     
     # Iniciar servidor
+
     app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
