@@ -102,11 +102,11 @@ class GoldTradingServer:
             
             # Eventos de exemplo para os próximos dias
             sample_events = [
-                {"name": "FED Interest Rate Decision", "hours_ahead": 2, "impact": "HIGH"},
-                {"name": "Non-Farm Payrolls", "hours_ahead": 24, "impact": "HIGH"},
-                {"name": "CPI Inflation Data", "hours_ahead": 6, "impact": "HIGH"},
-                {"name": "Retail Sales", "hours_ahead": 12, "impact": "MEDIUM"},
-                {"name": "Initial Jobless Claims", "hours_ahead": 18, "impact": "MEDIUM"},
+                {"name": "Decisão da taxa de juros do FED", "hours_ahead": 2, "impact": "ALTA"},
+                {"name": "Folha de Pagamento Não Agrícola", "hours_ahead": 24, "impact": "ALTA"},
+                {"name": "Dados de inflação do IPC", "hours_ahead": 6, "impact": "ALTA"},
+                {"name": "Vendas no varejo", "hours_ahead": 12, "impact": "MÉDIA"},
+                {"name": "Pedidos Iniciais de Seguro-Desemprego", "hours_ahead": 18, "impact": "MÉDIO"},
             ]
             
             for event in sample_events:
@@ -116,7 +116,7 @@ class GoldTradingServer:
                     'time': event_time,
                     'impact': event["impact"],
                     'currency': 'USD',
-                    'source': 'Generated'
+                    'source': 'Gerado'
                 })
             
             return future_events
@@ -210,7 +210,7 @@ class GoldTradingServer:
                         impact = row.get('Impact', 'MEDIUM').strip()
                     
                     impact = impact.upper()
-                    if impact not in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
+                    if impact not in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'ALTA', 'MÉDIA', 'MÉDIO', 'BAIXA']:
                         impact = 'MEDIUM'
                     
                     # Extrair moeda
@@ -487,42 +487,38 @@ class GoldTradingServer:
             logger.error(f"[ERROR] Notícias: {e}")
     
     def check_news_impact(self, minutes_before=20, minutes_after=30):
-    """Verifica eventos próximos - CORRIGIDO"""
-    try:
-        now = datetime.now()
-        critical_events = []
-        
-        for event in self.economic_events:
-            time_diff = (event['time'] - now).total_seconds() / 60
+        """Verifica eventos próximos - CORRIGIDO"""
+        try:
+            now = datetime.now()
+            critical_events = []
             
-            # CORREÇÃO: Verifica se o evento está na janela de bloqueio
-            if -minutes_after <= time_diff <= minutes_before:
-                critical_events.append({
-                    'event_name': event['name'],
-                    'impact': event['impact'],
-                    'minutes_away': int(time_diff),
-                    'currency': event['currency'],
-                    'source': event.get('source', 'Unknown')
-                })
-        
-        if critical_events:
-            # Ordena por impacto e proximidade
-            critical_events.sort(key=lambda x: (
-                {'CRITICAL': 0, 'HIGH': 1, 'ALTA': 1, 'MEDIUM': 2, 'MÉDIA': 2, 'MÉDIO': 2, 'LOW': 3}.get(x['impact'], 4),
-                abs(x['minutes_away'])
-            ))
+            for event in self.economic_events:
+                time_diff = (event['time'] - now).total_seconds() / 60
+                
+                # CORREÇÃO: Verifica se o evento está na janela de bloqueio
+                if -minutes_after <= time_diff <= minutes_before:
+                    critical_events.append({
+                        'event_name': event['name'],
+                        'impact': event['impact'],
+                        'minutes_away': int(time_diff),
+                        'currency': event['currency'],
+                        'source': event.get('source', 'Unknown')
+                    })
             
-            return {
-                'has_event': True,
-                **critical_events[0],
-                'total_events': len(critical_events)
-            }
-        
-        return {'has_event': False}
-        
-    except Exception as e:
-        logger.error(f"[ERROR] Verificando eventos: {e}")
-        return {'has_event': False}
+            if critical_events:
+                # CORREÇÃO: Ordena por impacto (agora suporta português e inglês)
+                critical_events.sort(key=lambda x: (
+                    {'CRITICAL': 0, 'HIGH': 1, 'ALTA': 1, 'MEDIUM': 2, 'MÉDIA': 2, 'MÉDIO': 2, 'LOW': 3, 'BAIXA': 3}.get(x['impact'], 4),
+                    abs(x['minutes_away'])
+                ))
+                
+                return {
+                    'has_event': True,
+                    **critical_events[0],
+                    'total_events': len(critical_events)
+                }
+            
+            return {'has_event': False}
             
         except Exception as e:
             logger.error(f"[ERROR] Verificando eventos: {e}")
@@ -548,6 +544,7 @@ class GoldTradingServer:
                     logger.debug("[CACHE] Retornando sinal do cache")
                     return cached['signal']
             
+            # CORREÇÃO: Verifica eventos primeiro (agora funciona corretamente)
             news_impact = self.check_news_impact()
             
             if news_impact['has_event']:
@@ -564,7 +561,7 @@ class GoldTradingServer:
                     'total_events': news_impact.get('total_events', 1)
                 }
                 
-                logger.warning(f"[EVENT] {news_impact['event_name']} em {news_impact['minutes_away']}min")
+                logger.warning(f"[EVENT] {news_impact['event_name']} em {news_impact['minutes_away']}min - BLOQUEANDO TRADES")
                 return result
             
             news_sentiment = self._analyze_news_sentiment()
@@ -920,14 +917,14 @@ def force_update():
 # Inicialização
 if __name__ == '__main__':
     print("="*70)
-    print(" "*10 + "GOLDAI PRO SERVER v2.0 - COM EVENTOS FUTUROS")
+    print(" "*10 + "GOLDAI PRO SERVER v2.0 - BLOQUEIO DE EVENTOS CORRIGIDO")
     print("="*70)
     print("\n[OK] Recursos implementados:")
-    print("  - Carregamento de calendário do Google Drive")
-    print("  - Filtro automático de eventos FUTUROS")
-    print("  - Fallback para API externa")
-    print("  - Geração de eventos de teste se necessário")
-    print("  - Sistema de cache inteligente")
+    print("  - ✅ Bloqueio de eventos funcionando (português/inglês)")
+    print("  - ✅ Carregamento de calendário do Google Drive") 
+    print("  - ✅ Filtro automático de eventos FUTUROS")
+    print("  - ✅ Fallback para API externa")
+    print("  - ✅ Geração de eventos de teste se necessário")
     print("\n[INFO] Configurações:")
     print(f"  - Fonte CSV: Google Drive")
     print(f"  - Alpha Vantage (Limite: {API_RATE_LIMIT}/dia)")
@@ -963,4 +960,3 @@ if __name__ == '__main__':
     # Iniciar servidor (CONFIGURAÇÃO RENDER)
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
-
