@@ -487,36 +487,42 @@ class GoldTradingServer:
             logger.error(f"[ERROR] Notícias: {e}")
     
     def check_news_impact(self, minutes_before=20, minutes_after=30):
-        """Verifica eventos próximos"""
-        try:
-            now = datetime.now()
-            critical_events = []
+    """Verifica eventos próximos - CORRIGIDO"""
+    try:
+        now = datetime.now()
+        critical_events = []
+        
+        for event in self.economic_events:
+            time_diff = (event['time'] - now).total_seconds() / 60
             
-            for event in self.economic_events:
-                time_diff = (event['time'] - now).total_seconds() / 60
-                
-                if -minutes_after <= time_diff <= minutes_before:
-                    critical_events.append({
-                        'event_name': event['name'],
-                        'impact': event['impact'],
-                        'minutes_away': int(time_diff),
-                        'currency': event['currency'],
-                        'source': event.get('source', 'Unknown')
-                    })
+            # CORREÇÃO: Verifica se o evento está na janela de bloqueio
+            if -minutes_after <= time_diff <= minutes_before:
+                critical_events.append({
+                    'event_name': event['name'],
+                    'impact': event['impact'],
+                    'minutes_away': int(time_diff),
+                    'currency': event['currency'],
+                    'source': event.get('source', 'Unknown')
+                })
+        
+        if critical_events:
+            # Ordena por impacto e proximidade
+            critical_events.sort(key=lambda x: (
+                {'CRITICAL': 0, 'HIGH': 1, 'ALTA': 1, 'MEDIUM': 2, 'MÉDIA': 2, 'MÉDIO': 2, 'LOW': 3}.get(x['impact'], 4),
+                abs(x['minutes_away'])
+            ))
             
-            if critical_events:
-                critical_events.sort(key=lambda x: (
-                    {'CRITICAL': 0, 'HIGH': 1, 'MEDIUM': 2, 'LOW': 3}.get(x['impact'], 4),
-                    abs(x['minutes_away'])
-                ))
-                
-                return {
-                    'has_event': True,
-                    **critical_events[0],
-                    'total_events': len(critical_events)
-                }
-            
-            return {'has_event': False}
+            return {
+                'has_event': True,
+                **critical_events[0],
+                'total_events': len(critical_events)
+            }
+        
+        return {'has_event': False}
+        
+    except Exception as e:
+        logger.error(f"[ERROR] Verificando eventos: {e}")
+        return {'has_event': False}
             
         except Exception as e:
             logger.error(f"[ERROR] Verificando eventos: {e}")
@@ -957,3 +963,4 @@ if __name__ == '__main__':
     # Iniciar servidor (CONFIGURAÇÃO RENDER)
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+
