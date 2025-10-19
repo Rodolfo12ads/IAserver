@@ -94,6 +94,66 @@ class GoldTradingServer:
         logger.info("[OK] Servidor GoldAI Pro v2.0 inicializado")
         self.start_background_updates()
     
+    def generate_future_events(self):
+        """Gera eventos futuros para teste se o CSV estiver vazio"""
+        try:
+            now = datetime.now()
+            future_events = []
+            
+            # Eventos de exemplo para os próximos dias
+            sample_events = [
+                {"name": "FED Interest Rate Decision", "hours_ahead": 2, "impact": "HIGH"},
+                {"name": "Non-Farm Payrolls", "hours_ahead": 24, "impact": "HIGH"},
+                {"name": "CPI Inflation Data", "hours_ahead": 6, "impact": "HIGH"},
+                {"name": "Retail Sales", "hours_ahead": 12, "impact": "MEDIUM"},
+                {"name": "Initial Jobless Claims", "hours_ahead": 18, "impact": "MEDIUM"},
+            ]
+            
+            for event in sample_events:
+                event_time = now + timedelta(hours=event["hours_ahead"])
+                future_events.append({
+                    'name': event["name"],
+                    'time': event_time,
+                    'impact': event["impact"],
+                    'currency': 'USD',
+                    'source': 'Generated'
+                })
+            
+            return future_events
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Gerando eventos futuros: {e}")
+            return []
+    
+    def ensure_calendar_data(self):
+        """Garante que sempre tenha dados de calendário FUTUROS"""
+        try:
+            # Remove eventos passados primeiro
+            now = datetime.now()
+            self.economic_events = [e for e in self.economic_events if e['time'] > now]
+            
+            if not self.economic_events:
+                logger.info("[INFO] Sem eventos futuros, buscando da API externa...")
+                external_events = self.fetch_external_calendar()
+                if external_events:
+                    self.economic_events = [e for e in external_events if e['time'] > now]
+                    self.economic_events.sort(key=lambda x: x['time'])
+                    self.last_csv_fetch = datetime.now()
+                    logger.info(f"[OK] {len(self.economic_events)} eventos futuros carregados")
+                
+                # Se ainda estiver vazio, gera eventos de teste
+                if not self.economic_events:
+                    logger.info("[INFO] Gerando eventos futuros para teste...")
+                    future_events = self.generate_future_events()
+                    self.economic_events = future_events
+                    logger.info(f"[OK] {len(future_events)} eventos de teste gerados")
+                    
+            return True
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Garantindo dados de calendário: {e}")
+            return False
+    
     def load_csv_from_drive(self):
         """Carrega eventos do CSV do Google Drive sem pandas"""
         try:
@@ -139,6 +199,11 @@ class GoldTradingServer:
                     if not event_date:
                         continue
                     
+                    # Extrair hora
+                    event_time_str = row.get('Hora', '').strip()
+                    if not event_time_str:
+                        event_time_str = row.get('Time', '09:30').strip()
+                    
                     # Extrair impacto
                     impact = row.get('Impacto', 'MEDIUM').strip()
                     if not impact:
@@ -154,68 +219,62 @@ class GoldTradingServer:
                         currency = row.get('Currency', 'USD').strip()
                     currency = currency.upper()
                     
+                    # Combinar data e hora
+                    datetime_str = f"{event_date} {event_time_str}"
+                    
                     # Parsear data
                     event_datetime = None
                     
-                    # Tentar formato ISO 8601
-                    if 'T' in event_date:
+                    # Tentar formatos de data/hora
+                    formatos = [
+                        "%Y-%m-%d %H:%M",
+                        "%d/%m/%Y %H:%M", 
+                        "%Y-%m-%d",
+                        "%d/%m/%Y",
+                    ]
+                    
+                    for fmt in formatos:
                         try:
-                            date_part = event_date.split('+')[0].split('-04:00')[0].split('-05:00')[0]
-                            event_datetime = datetime.fromisoformat(date_part)
+                            event_datetime = datetime.strptime(datetime_str, fmt)
+                            break
                         except:
-                            try:
-                                event_datetime = datetime.fromisoformat(event_date.replace('Z', '+00:00'))
-                            except:
-                                pass
-                    
-                    # Tentar formatos alternativos
-                    if event_datetime is None:
-                        formatos = [
-                            "%Y-%m-%d %H:%M",
-                            "%d/%m/%Y %H:%M", 
-                            "%Y-%m-%d",
-                            "%d/%m/%Y",
-                        ]
-                        
-                        for fmt in formatos:
-                            try:
-                                event_datetime = datetime.strptime(event_date, fmt)
-                                break
-                            except:
-                                continue
+                            continue
                     
                     if event_datetime is None:
-                        logger.warning(f"[WARN] Não consegui parsear data: '{event_date}' ({event_name})")
+                        logger.warning(f"[WARN] Não consegui parsear data: '{datetime_str}' ({event_name})")
                         continue
                     
-                    csv_events.append({
-                        'name': event_name,
-                        'time': event_datetime,
-                        'impact': impact,
-                        'currency': currency,
-                        'source': 'Google Drive CSV'
-                    })
-                    
-                    logger.debug(f"[DEBUG] Evento carregado: {event_name} - {event_datetime} ({impact})")
+                    # Só adiciona eventos FUTUROS
+                    if event_datetime > datetime.now():
+                        csv_events.append({
+                            'name': event_name,
+                            'time': event_datetime,
+                            'impact': impact,
+                            'currency': currency,
+                            'source': 'Google Drive CSV'
+                        })
+                        logger.debug(f"[DEBUG] Evento futuro carregado: {event_name} - {event_datetime} ({impact})")
                     
                 except Exception as e:
                     logger.warning(f"[WARN] Erro ao processar linha {row_count}: {e}")
                     continue
             
             logger.info(f"[DEBUG] Total de linhas processadas: {row_count}")
+            logger.info(f"[DEBUG] Eventos futuros encontrados: {len(csv_events)}")
             
             # Atualizar eventos
-            self.economic_events = csv_events
-            self.economic_events.sort(key=lambda x: x['time'])
-            self.last_csv_fetch = datetime.now()
+            if csv_events:
+                self.economic_events.extend(csv_events)
+                self.economic_events.sort(key=lambda x: x['time'])
+                self.last_csv_fetch = datetime.now()
             
-            logger.info(f"[OK] Calendário carregado do Google Drive: {len(csv_events)} eventos válidos")
+            logger.info(f"[OK] Calendário carregado do Google Drive: {len(csv_events)} eventos futuros")
             
             if csv_events:
                 for event in csv_events[:5]:
                     logger.info(f"     - {event['name']} ({event['time'].strftime('%d/%m %H:%M')}) - {event['impact']}")
             
-            return True
+            return len(csv_events) > 0
             
         except Exception as e:
             logger.error(f"[ERROR] Carregando CSV do Google Drive: {e}")
@@ -259,19 +318,21 @@ class GoldTradingServer:
                         datetime_str = f"{date_str} {time_str}" if time_str else date_str
                         event_datetime = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
                     
-                    external_events.append({
-                        'name': ev.get("title", "Evento"),
-                        'time': event_datetime,
-                        'impact': impact.upper(),
-                        'currency': 'USD',
-                        'source': 'External API'
-                    })
-                    count_usd += 1
+                    # Só adiciona eventos FUTUROS
+                    if event_datetime > datetime.now():
+                        external_events.append({
+                            'name': ev.get("title", "Evento"),
+                            'time': event_datetime,
+                            'impact': impact.upper(),
+                            'currency': 'USD',
+                            'source': 'External API'
+                        })
+                        count_usd += 1
                     
                 except Exception as e:
                     continue
             
-            logger.info(f"[OK] {count_usd} eventos USD carregados da API externa")
+            logger.info(f"[OK] {count_usd} eventos USD futuros carregados da API externa")
             return external_events
             
         except Exception as e:
@@ -282,20 +343,22 @@ class GoldTradingServer:
         """Carrega eventos do Google Drive com fallback para API externa"""
         try:
             # Primeiro tenta carregar do Google Drive
-            if self.load_csv_from_drive():
-                return True
-            else:
+            drive_success = self.load_csv_from_drive()
+            
+            if not drive_success or not self.economic_events:
                 # Fallback para API externa
                 logger.info("[INFO] Fallback para API externa...")
                 external_events = self.fetch_external_calendar()
                 if external_events:
-                    self.economic_events = external_events
+                    self.economic_events.extend(external_events)
                     self.economic_events.sort(key=lambda x: x['time'])
                     self.last_csv_fetch = datetime.now()
-                    logger.info(f"[OK] {len(external_events)} eventos carregados da API externa")
-                    return True
+                    logger.info(f"[OK] {len(external_events)} eventos futuros carregados da API externa")
             
-            return False
+            # Garante que sempre tenha dados
+            self.ensure_calendar_data()
+            
+            return len(self.economic_events) > 0
             
         except Exception as e:
             logger.error(f"[ERROR] Carregando eventos: {e}")
@@ -311,6 +374,9 @@ class GoldTradingServer:
                         self.api_calls_today = 0
                         self.api_reset_time += timedelta(days=1)
                         logger.info("[RESET] Contador de API resetado")
+                    
+                    # Garante dados de calendário primeiro
+                    self.ensure_calendar_data()
                     
                     # Carregar eventos do calendário
                     self.load_calendar_events()
@@ -848,15 +914,14 @@ def force_update():
 # Inicialização
 if __name__ == '__main__':
     print("="*70)
-    print(" "*10 + "GOLDAI PRO SERVER v2.0 - GOOGLE DRIVE CSV")
+    print(" "*10 + "GOLDAI PRO SERVER v2.0 - COM EVENTOS FUTUROS")
     print("="*70)
     print("\n[OK] Recursos implementados:")
     print("  - Carregamento de calendário do Google Drive")
+    print("  - Filtro automático de eventos FUTUROS")
+    print("  - Fallback para API externa")
+    print("  - Geração de eventos de teste se necessário")
     print("  - Sistema de cache inteligente")
-    print("  - Controle automatico de rate limit")
-    print("  - Logging estruturado (UTF-8)")
-    print("  - Analise de sentimento ponderada")
-    print("  - Calendario economico em tempo real")
     print("\n[INFO] Configurações:")
     print(f"  - Fonte CSV: Google Drive")
     print(f"  - Alpha Vantage (Limite: {API_RATE_LIMIT}/dia)")
