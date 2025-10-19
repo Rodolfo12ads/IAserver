@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: gold-ai-bot
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "supervisord -c supervisord.conf"
+    plan: free
