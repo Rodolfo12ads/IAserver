@@ -1,0 +1,28 @@
+{
+  "session_start": "2025-10-12T12:30:19.861511",
+  "session_end": "2025-10-12T12:30:37.206704",
+  "total_signals": 1,
+  "server_url": "http://127.0.0.1:5000",
+  "signals": [
+    {
+      "action": "hold",
+      "confidence": "low",
+      "market_regime": "trending_up",
+      "news": "Trump Fires Thousands In Shutdown Layoffs—Hitting Treasury And Health Departments Hardest: Here’s What To Know",
+      "news_impact": 5.0,
+      "news_source": "Forbes",
+      "position_size": 0.0,
+      "risk_reward_ratio": 1.57,
+      "score": 0.438,
+      "sentiment": "NEGATIVE",
+      "sentiment_confidence": 0.99,
+      "stop_loss_pips": 35,
+      "take_profit_pips": 55,
+      "timestamp": "2025-10-12 12:30:22",
+      "trend_strength": 1.0,
+      "volatility": "high",
+      "win_rate": 0.0,
+      "received_at": "2025-10-12T12:30:22.370238"
+    }
+  ]
+}
