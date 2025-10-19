@@ -67,7 +67,7 @@ def error_handler(func):
 class GoldTradingServer:
     def __init__(self):
         self.alpha_key = ALPHA_VANTAGE_KEY
-        self.csv_path = CSV_PATH
+        self.csv_url = NEWS_CSV_URL
         
         # Cache
         self.economic_events = []
@@ -79,7 +79,7 @@ class GoldTradingServer:
         self.last_news_fetch = None
         self.last_calendar_fetch = None
         self.last_price_fetch = None
-        self.csv_last_modified = None
+        self.last_csv_fetch = None
         
         # Estatísticas
         self.total_signals = 0
@@ -92,143 +92,124 @@ class GoldTradingServer:
         self.prediction_accuracy = {}
         
         logger.info("[OK] Servidor GoldAI Pro v2.0 inicializado")
-        self.verify_csv_exists()
         self.start_background_updates()
     
-    def verify_csv_exists(self):
-        """Verifica se o arquivo CSV existe"""
-        if os.path.exists(self.csv_path):
-            logger.info(f"[OK] Arquivo CSV encontrado: {self.csv_path}")
-        else:
-            logger.warning(f"[WARN] Arquivo CSV não encontrado: {self.csv_path}")
-    
-    def load_csv_calendar(self):
-        """Carrega eventos do arquivo CSV"""
+    def load_csv_from_drive(self):
+        """Carrega eventos do CSV do Google Drive sem pandas"""
         try:
-            if not os.path.exists(self.csv_path):
-                logger.warning(f"[WARN] Arquivo CSV não existe: {self.csv_path}")
-                return False
+            logger.info(f"[API] Buscando CSV do Google Drive: {self.csv_url}")
+            
+            # Fazer download do CSV
+            response = requests.get(self.csv_url, timeout=30)
+            response.raise_for_status()
+            
+            # Decodificar o conteúdo
+            content = response.content.decode('utf-8')
+            lines = content.split('\n')
             
             csv_events = []
-            file_mod_time = os.path.getmtime(self.csv_path)
+            reader = csv.DictReader(lines)
             
-            # Verificar se o arquivo foi modificado desde a última leitura
-            if self.csv_last_modified and file_mod_time == self.csv_last_modified:
-                logger.debug("[CACHE] CSV não foi modificado, usando cache")
-                return True
+            # Debug: mostrar colunas encontradas
+            if reader.fieldnames:
+                logger.info(f"[DEBUG] Colunas encontradas: {reader.fieldnames}")
             
-            logger.info(f"[DEBUG] Abrindo CSV: {self.csv_path}")
-            
-            with open(self.csv_path, 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
+            row_count = 0
+            for row in reader:
+                row_count += 1
                 
-                # Debug: mostrar colunas encontradas
-                if reader.fieldnames:
-                    logger.info(f"[DEBUG] Colunas encontradas: {reader.fieldnames}")
+                # Pular linhas vazias
+                if not any(row.values()):
+                    continue
                 
-                row_count = 0
-                for row in reader:
-                    row_count += 1
+                try:
+                    # Extrair evento
+                    event_name = row.get('Evento', '').strip()
+                    if not event_name:
+                        event_name = row.get('Event', '').strip()
                     
-                    # Pular linhas vazias
-                    if not any(row.values()):
-                        logger.debug(f"[DEBUG] Linha {row_count} vazia, pulando")
+                    if not event_name:
                         continue
                     
-                    try:
-                        # Extrair evento (Evento em português)
-                        event_name = row.get('Evento', '').strip()
-                        if not event_name:
-                            event_name = row.get('Event', '').strip()
-                        
-                        if not event_name or event_name.isspace():
-                            logger.debug(f"[DEBUG] Linha {row_count}: evento vazio")
-                            continue
-                        
-                        # Extrair data (Data em português)
-                        event_date = row.get('Data', '').strip()
-                        if not event_date:
-                            event_date = row.get('Date', '').strip()
-                        
-                        if not event_date or event_date.isspace():
-                            logger.debug(f"[DEBUG] Linha {row_count}: data vazia - {event_name}")
-                            continue
-                        
-                        # Extrair impacto (Impacto em português)
-                        impact = row.get('Impacto', 'MEDIUM').strip()
-                        if not impact:
-                            impact = row.get('Impact', 'MEDIUM').strip()
-                        
-                        impact = impact.upper()
-                        if impact not in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
-                            impact = 'MEDIUM'
-                        
-                        # Extrair moeda (Moeda em português)
-                        currency = row.get('Moeda', 'USD').strip()
-                        if not currency:
-                            currency = row.get('Currency', 'USD').strip()
-                        currency = currency.upper()
-                        
-                        # Parsear data ISO 8601 com timezone
-                        event_datetime = None
-                        
-                        # Formato: 2025-10-14T12:20:00-04:00
-                        if 'T' in event_date:
+                    # Extrair data
+                    event_date = row.get('Data', '').strip()
+                    if not event_date:
+                        event_date = row.get('Date', '').strip()
+                    
+                    if not event_date:
+                        continue
+                    
+                    # Extrair impacto
+                    impact = row.get('Impacto', 'MEDIUM').strip()
+                    if not impact:
+                        impact = row.get('Impact', 'MEDIUM').strip()
+                    
+                    impact = impact.upper()
+                    if impact not in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
+                        impact = 'MEDIUM'
+                    
+                    # Extrair moeda
+                    currency = row.get('Moeda', 'USD').strip()
+                    if not currency:
+                        currency = row.get('Currency', 'USD').strip()
+                    currency = currency.upper()
+                    
+                    # Parsear data
+                    event_datetime = None
+                    
+                    # Tentar formato ISO 8601
+                    if 'T' in event_date:
+                        try:
+                            date_part = event_date.split('+')[0].split('-04:00')[0].split('-05:00')[0]
+                            event_datetime = datetime.fromisoformat(date_part)
+                        except:
                             try:
-                                # Remover timezone (+HH:MM ou -HH:MM) para parsear
-                                date_part = event_date.split('+')[0].split('-04:00')[0].split('-05:00')[0]
-                                event_datetime = datetime.fromisoformat(date_part)
+                                event_datetime = datetime.fromisoformat(event_date.replace('Z', '+00:00'))
                             except:
-                                try:
-                                    # Tentar com fromisoformat direto (Python 3.7+)
-                                    event_datetime = datetime.fromisoformat(event_date.replace('Z', '+00:00'))
-                                except:
-                                    pass
+                                pass
+                    
+                    # Tentar formatos alternativos
+                    if event_datetime is None:
+                        formatos = [
+                            "%Y-%m-%d %H:%M",
+                            "%d/%m/%Y %H:%M", 
+                            "%Y-%m-%d",
+                            "%d/%m/%Y",
+                        ]
                         
-                        # Se não conseguiu parsear como ISO, tentar formatos alternativos
-                        if event_datetime is None:
-                            formatos = [
-                                "%Y-%m-%d %H:%M",
-                                "%d/%m/%Y %H:%M",
-                                "%Y-%m-%d",
-                                "%d/%m/%Y",
-                            ]
-                            
-                            for fmt in formatos:
-                                try:
-                                    event_datetime = datetime.strptime(event_date, fmt)
-                                    break
-                                except:
-                                    continue
-                        
-                        if event_datetime is None:
-                            logger.warning(f"[WARN] Não consegui parsear data: '{event_date}' ({event_name})")
-                            continue
-                        
-                        csv_events.append({
-                            'name': event_name,
-                            'time': event_datetime,
-                            'impact': impact,
-                            'currency': currency,
-                            'source': 'CSV'
-                        })
-                        
-                        logger.debug(f"[DEBUG] Evento carregado: {event_name} - {event_datetime} ({impact})")
-                        
-                    except Exception as e:
-                        logger.warning(f"[WARN] Erro ao processar linha {row_count}: {e}")
-                        import traceback
-                        logger.debug(traceback.format_exc())
+                        for fmt in formatos:
+                            try:
+                                event_datetime = datetime.strptime(event_date, fmt)
+                                break
+                            except:
+                                continue
+                    
+                    if event_datetime is None:
+                        logger.warning(f"[WARN] Não consegui parsear data: '{event_date}' ({event_name})")
                         continue
-                
-                logger.info(f"[DEBUG] Total de linhas lidas: {row_count}")
+                    
+                    csv_events.append({
+                        'name': event_name,
+                        'time': event_datetime,
+                        'impact': impact,
+                        'currency': currency,
+                        'source': 'Google Drive CSV'
+                    })
+                    
+                    logger.debug(f"[DEBUG] Evento carregado: {event_name} - {event_datetime} ({impact})")
+                    
+                except Exception as e:
+                    logger.warning(f"[WARN] Erro ao processar linha {row_count}: {e}")
+                    continue
+            
+            logger.info(f"[DEBUG] Total de linhas processadas: {row_count}")
             
             # Atualizar eventos
             self.economic_events = csv_events
             self.economic_events.sort(key=lambda x: x['time'])
-            self.csv_last_modified = file_mod_time
+            self.last_csv_fetch = datetime.now()
             
-            logger.info(f"[OK] Calendário carregado do CSV: {len(csv_events)} eventos validos")
+            logger.info(f"[OK] Calendário carregado do Google Drive: {len(csv_events)} eventos válidos")
             
             if csv_events:
                 for event in csv_events[:5]:
@@ -237,9 +218,87 @@ class GoldTradingServer:
             return True
             
         except Exception as e:
-            logger.error(f"[ERROR] Carregando CSV: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"[ERROR] Carregando CSV do Google Drive: {e}")
+            return False
+    
+    def fetch_external_calendar(self):
+        """Busca calendário de fonte pública (fallback)"""
+        try:
+            url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+            logger.info(f"[API] Buscando calendário externo de {url}")
+            
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            
+            events = data if isinstance(data, list) else data.get("events", [])
+            logger.info(f"[API] {len(events)} eventos recebidos")
+            
+            external_events = []
+            count_usd = 0
+            
+            for ev in events:
+                country = ev.get("country", "")
+                currency = ev.get("currency", "")
+                
+                if "US" not in country.upper() and currency.upper() != "USD":
+                    continue
+                
+                impact = ev.get("impact", "Medium").capitalize()
+                
+                if impact not in ["Medium", "High"]:
+                    continue
+                
+                # Parsear data do evento externo
+                date_str = ev.get("date", "")
+                time_str = ev.get("time", "")
+                
+                try:
+                    if 'T' in date_str:
+                        event_datetime = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                    else:
+                        datetime_str = f"{date_str} {time_str}" if time_str else date_str
+                        event_datetime = datetime.strptime(datetime_str, "%Y-%m-%d %H:%M:%S")
+                    
+                    external_events.append({
+                        'name': ev.get("title", "Evento"),
+                        'time': event_datetime,
+                        'impact': impact.upper(),
+                        'currency': 'USD',
+                        'source': 'External API'
+                    })
+                    count_usd += 1
+                    
+                except Exception as e:
+                    continue
+            
+            logger.info(f"[OK] {count_usd} eventos USD carregados da API externa")
+            return external_events
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Falha ao buscar calendário externo: {e}")
+            return []
+    
+    def load_calendar_events(self):
+        """Carrega eventos do Google Drive com fallback para API externa"""
+        try:
+            # Primeiro tenta carregar do Google Drive
+            if self.load_csv_from_drive():
+                return True
+            else:
+                # Fallback para API externa
+                logger.info("[INFO] Fallback para API externa...")
+                external_events = self.fetch_external_calendar()
+                if external_events:
+                    self.economic_events = external_events
+                    self.economic_events.sort(key=lambda x: x['time'])
+                    self.last_csv_fetch = datetime.now()
+                    logger.info(f"[OK] {len(external_events)} eventos carregados da API externa")
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Carregando eventos: {e}")
             return False
     
     def start_background_updates(self):
@@ -253,8 +312,8 @@ class GoldTradingServer:
                         self.api_reset_time += timedelta(days=1)
                         logger.info("[RESET] Contador de API resetado")
                     
-                    # Carregar eventos do CSV
-                    self.load_csv_calendar()
+                    # Carregar eventos do calendário
+                    self.load_calendar_events()
                     
                     # Atualizar dados da API (se disponível)
                     if self.api_calls_today < API_RATE_LIMIT - 50:
@@ -644,7 +703,7 @@ class GoldTradingServer:
             
             return {
                 'status': 'running',
-                'uptime': str(datetime.now() - self.last_calendar_fetch) if self.last_calendar_fetch else 'N/A',
+                'uptime': str(datetime.now() - self.last_csv_fetch) if self.last_csv_fetch else 'N/A',
                 'statistics': {
                     'total_signals': self.total_signals,
                     'accurate_signals': self.accurate_signals,
@@ -659,13 +718,13 @@ class GoldTradingServer:
                     'price_points': len(self.price_cache)
                 },
                 'last_updates': {
-                    'calendar': self.last_calendar_fetch.strftime('%H:%M:%S') if self.last_calendar_fetch else 'Never',
+                    'calendar': self.last_csv_fetch.strftime('%H:%M:%S') if self.last_csv_fetch else 'Never',
                     'news': self.last_news_fetch.strftime('%H:%M:%S') if self.last_news_fetch else 'Never'
                 },
                 'csv_info': {
-                    'path': self.csv_path,
-                    'exists': os.path.exists(self.csv_path),
-                    'last_modified': datetime.fromtimestamp(os.path.getmtime(self.csv_path)).strftime('%d/%m %H:%M:%S') if os.path.exists(self.csv_path) else None
+                    'source': 'Google Drive',
+                    'url': self.csv_url,
+                    'last_fetch': self.last_csv_fetch.strftime('%d/%m %H:%M:%S') if self.last_csv_fetch else None
                 },
                 'next_event': next_event,
                 'market_sentiment': overall_sentiment,
@@ -717,7 +776,7 @@ def calendar():
     return jsonify({
         'total': len(upcoming),
         'events': upcoming[:15],
-        'last_update': gold_server.last_calendar_fetch.strftime('%H:%M:%S') if gold_server.last_calendar_fetch else None
+        'last_update': gold_server.last_csv_fetch.strftime('%H:%M:%S') if gold_server.last_csv_fetch else None
     }), 200
 
 @app.route('/news', methods=['GET'])
@@ -763,7 +822,7 @@ def home():
         'status': 'running',
         'endpoints': {
             'POST /signal': 'Gerar sinal de trading',
-            'GET /calendar': 'Calendario economico (CSV + API)',
+            'GET /calendar': 'Calendario economico (Google Drive)',
             'GET /news': 'Noticias recentes',
             'GET /status': 'Status do sistema',
             'GET /history': 'Historico de sinais',
@@ -774,7 +833,7 @@ def home():
 @app.route('/force-update', methods=['POST'])
 @error_handler
 def force_update():
-    threading.Thread(target=gold_server.load_csv_calendar).start()
+    threading.Thread(target=gold_server.load_calendar_events).start()
     if gold_server.api_calls_today < API_RATE_LIMIT - 10:
         threading.Thread(target=gold_server.fetch_gold_news).start()
         news_status = 'updating'
@@ -782,37 +841,34 @@ def force_update():
         news_status = 'skipped (API limit)'
     return jsonify({
         'message': 'Atualizacao iniciada',
-        'calendar': 'updating (CSV)',
+        'calendar': 'updating (Google Drive + External API)',
         'news': news_status
     }), 200
 
 # Inicialização
 if __name__ == '__main__':
     print("="*70)
-    print(" "*10 + "GOLDAI PRO SERVER v2.0 - COM SUPORTE A CSV")
+    print(" "*10 + "GOLDAI PRO SERVER v2.0 - GOOGLE DRIVE CSV")
     print("="*70)
     print("\n[OK] Recursos implementados:")
-    print("  - Carregamento de calendário do CSV")
+    print("  - Carregamento de calendário do Google Drive")
     print("  - Sistema de cache inteligente")
     print("  - Controle automatico de rate limit")
     print("  - Logging estruturado (UTF-8)")
     print("  - Analise de sentimento ponderada")
     print("  - Calendario economico em tempo real")
     print("\n[INFO] Configurações:")
-    print(f"  - Arquivo CSV: {CSV_PATH}")
+    print(f"  - Fonte CSV: Google Drive")
     print(f"  - Alpha Vantage (Limite: {API_RATE_LIMIT}/dia)")
     print("\n[INFO] Endpoints disponiveis:")
     print("  POST /signal       -> Gerar sinal de trading")
-    print("  GET  /calendar     -> Proximos eventos (CSV)")
+    print("  GET  /calendar     -> Proximos eventos")
     print("  GET  /news         -> Noticias recentes")
     print("  GET  /status       -> Status do sistema")
     print("  GET  /history      -> Historico de sinais")
     print("  POST /force-update -> Forcar atualizacao")
     print("  GET  /health       -> Health check")
     print("\n" + "="*70)
-    print("[START] Servidor iniciando em: http://127.0.0.1:5000")
-    print("[LOG] Logs salvos em: goldai_server.log")
-    print("="*70 + "\n")
     
     try:
         file_handler = logging.FileHandler('goldai_server.log', encoding='utf-8')
@@ -824,15 +880,15 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"[WARN] Nao foi possivel criar arquivo de log: {e}")
     
-    # Carregar calendário do CSV na inicialização
-    logger.info("[START] Iniciando carregamento do CSV...")
-    gold_server.load_csv_calendar()
+    # Carregar calendário na inicialização
+    logger.info("[START] Iniciando carregamento do calendário...")
+    gold_server.load_calendar_events()
     
     # Atualizar dados da API
     logger.info("[START] Iniciando atualizacao de noticias...")
     gold_server.fetch_gold_news()
     logger.info("[OK] Sistema pronto!")
     
-    # Iniciar servidor
-
-    app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
+    # Iniciar servidor (CONFIGURAÇÃO RENDER)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
